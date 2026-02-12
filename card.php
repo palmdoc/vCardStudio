@@ -27,6 +27,17 @@ function e(string $value): string
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
+function vcfEscape(string $value): string
+{
+    $value = str_replace(["\r", "\n"], ['\\n', '\\n'], $value);
+    return str_replace([';', ','], ['\\;', '\\,'], $value);
+}
+
+function isExternalLink(string $url): bool
+{
+    return (bool)preg_match('#^https?://#i', $url);
+}
+
 $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
 $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $base = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/\\');
@@ -42,17 +53,17 @@ if (($_GET['download'] ?? '') === 'vcf') {
     $lines = [
         'BEGIN:VCARD',
         'VERSION:3.0',
-        'FN:' . $fullName,
+        'FN:' . vcfEscape($fullName),
     ];
 
     if ($organization !== '') {
-        $lines[] = 'ORG:' . $organization;
+        $lines[] = 'ORG:' . vcfEscape($organization);
     }
     if ($title !== '') {
-        $lines[] = 'TITLE:' . $title;
+        $lines[] = 'TITLE:' . vcfEscape($title);
     }
     if ($address !== '') {
-        $lines[] = 'ADR:;;' . str_replace(["\r", "\n"], ' ', $address) . ';;;;';
+        $lines[] = 'ADR:;;' . vcfEscape($address) . ';;;;';
     }
 
     foreach (($card['phones'] ?? []) as $phone) {
@@ -65,12 +76,8 @@ if (($_GET['download'] ?? '') === 'vcf') {
         $lines[] = 'EMAIL;TYPE=INTERNET:' . trim((string)$email);
     }
 
-    $primaryLink = '';
     if (!empty($card['links'][0]['url'])) {
-        $primaryLink = (string)$card['links'][0]['url'];
-    }
-    if ($primaryLink !== '') {
-        $lines[] = 'URL:' . $primaryLink;
+        $lines[] = 'URL:' . trim((string)$card['links'][0]['url']);
     }
 
     $lines[] = 'END:VCARD';
@@ -81,16 +88,21 @@ if (($_GET['download'] ?? '') === 'vcf') {
     exit;
 }
 
+$name = trim((string)($card['name'] ?? ''));
+$title = trim((string)($card['title'] ?? ''));
+$company = trim((string)($card['company'] ?? ''));
+$address = trim((string)($card['address'] ?? ''));
+$subtitle = trim($title . ($title !== '' && $company !== '' ? ' · ' : '') . $company);
+
 $actions = [];
 if (!empty($card['location_url'])) {
     $actions[] = ['icon' => '📍', 'label' => 'Location', 'url' => (string)$card['location_url']];
 }
 if (!empty($card['phones'][0])) {
-    $phone = (string)$card['phones'][0];
-    $actions[] = ['icon' => '📞', 'label' => 'Clinic Line', 'url' => 'tel:' . $phone];
+    $actions[] = ['icon' => '📞', 'label' => 'Clinic Line', 'url' => 'tel:' . (string)$card['phones'][0]];
 }
 if (!empty($card['whatsapp'])) {
-    $actions[] = ['icon' => '🟢', 'label' => 'Whatsapp', 'url' => 'https://wa.me/' . preg_replace('/\D+/', '', (string)$card['whatsapp'])];
+    $actions[] = ['icon' => '💬', 'label' => 'Whatsapp', 'url' => 'https://wa.me/' . preg_replace('/\D+/', '', (string)$card['whatsapp'])];
 }
 if (!empty($card['emails'][0])) {
     $actions[] = ['icon' => '✉️', 'label' => 'Email', 'url' => 'mailto:' . (string)$card['emails'][0]];
@@ -106,39 +118,47 @@ foreach (($card['socials'] ?? []) as $platform => $url) {
     }
 }
 $actions[] = ['icon' => '👤', 'label' => 'Full vCard', 'url' => 'card.php?id=' . urlencode($id) . '&download=vcf'];
+$actions = array_slice($actions, 0, 12);
+
+$initial = strtoupper(substr($name !== '' ? $name : 'C', 0, 1));
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo e((string)$card['name']); ?> - Virtual Card</title>
+    <title><?php echo e($name); ?> - Virtual Card</title>
     <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 <div class="preview-page sample-layout-wrap">
     <a class="back-link" href="index.php">← Back to editor</a>
     <article class="sample-card">
-        <button class="share-circle" id="open-share" type="button" aria-label="Share">⋯</button>
+        <button class="share-circle" id="open-share" type="button" aria-label="Share card">⋯</button>
 
         <?php if (!empty($card['image']) && file_exists(__DIR__ . '/' . $card['image'])): ?>
-            <div class="avatar"><img src="<?php echo e((string)$card['image']); ?>" alt="Logo"></div>
+            <div class="avatar"><img src="<?php echo e((string)$card['image']); ?>" alt="Profile image"></div>
+        <?php else: ?>
+            <div class="avatar placeholder"><?php echo e($initial); ?></div>
         <?php endif; ?>
 
-        <h1><?php echo e((string)$card['name']); ?></h1>
-        <p class="subtext"><?php echo e(trim((string)($card['title'] ?? ''))); ?></p>
-        <p class="address"><?php echo e(trim((string)($card['address'] ?? ''))); ?></p>
+        <h1><?php echo e($name); ?></h1>
+        <?php if ($subtitle !== ''): ?><p class="subtext"><?php echo e($subtitle); ?></p><?php endif; ?>
+        <?php if ($address !== ''): ?><p class="address"><?php echo e($address); ?></p><?php endif; ?>
 
         <a class="save-contact" href="card.php?id=<?php echo urlencode($id); ?>&download=vcf">Save Contact</a>
 
-        <div class="action-grid">
-            <?php foreach ($actions as $action): ?>
-                <a class="action-item" href="<?php echo e($action['url']); ?>" target="_blank" rel="noopener">
-                    <span class="icon-box"><?php echo e($action['icon']); ?></span>
-                    <span><?php echo e($action['label']); ?></span>
-                </a>
-            <?php endforeach; ?>
-        </div>
+        <?php if (count($actions) > 0): ?>
+            <div class="action-grid">
+                <?php foreach ($actions as $action): ?>
+                    <?php $external = isExternalLink((string)$action['url']); ?>
+                    <a class="action-item" href="<?php echo e((string)$action['url']); ?>"<?php echo $external ? ' target="_blank" rel="noopener"' : ''; ?>>
+                        <span class="icon-box"><?php echo e((string)$action['icon']); ?></span>
+                        <span><?php echo e((string)$action['label']); ?></span>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
     </article>
 </div>
 
@@ -159,8 +179,12 @@ const closeBtn = document.getElementById('close-share');
 const copyBtn = document.getElementById('copy-link');
 const shareUrlInput = document.getElementById('share-url');
 
-openBtn.addEventListener('click', () => shareModal.hidden = false);
-closeBtn.addEventListener('click', () => shareModal.hidden = true);
+openBtn.addEventListener('click', () => {
+    shareModal.hidden = false;
+});
+closeBtn.addEventListener('click', () => {
+    shareModal.hidden = true;
+});
 shareModal.addEventListener('click', (event) => {
     if (event.target === shareModal) {
         shareModal.hidden = true;
@@ -171,7 +195,9 @@ copyBtn.addEventListener('click', async () => {
     try {
         await navigator.clipboard.writeText(shareUrlInput.value);
         copyBtn.textContent = 'Copied!';
-        setTimeout(() => { copyBtn.textContent = 'Copy Link'; }, 1500);
+        setTimeout(() => {
+            copyBtn.textContent = 'Copy Link';
+        }, 1500);
     } catch (err) {
         shareUrlInput.select();
         document.execCommand('copy');
